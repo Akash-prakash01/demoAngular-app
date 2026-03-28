@@ -1,0 +1,116 @@
+pipeline{
+    agent any
+    tools{
+        nodejs 'nodeJS'
+    }
+    environment{
+        angular_cli_version ='21.2.5'
+        node_env = 'Production'
+        chrome_bin 'C:\Program Files\Google\Chrome\Application'
+        display = ':99'
+       
+    }
+    stages{
+        stage{'Checkout'}{
+            steps{
+                echo 'Checkout Source Code '
+                checkout sem
+                script{
+                    echo "Build No. : ${env.build_number}"
+                    echo "Branch : ${env.branch_name}"
+                    echo "Commit : ${env.git_commit}"
+       
+                }
+            }
+        }
+        stage{'Install Dependencies'}{
+            steps{
+                echo 'Installing NodeJS Dependencies'
+                sh """
+                node --version
+                npm --version
+                npm ci --only = production = false
+                """
+            }
+        }
+        stage{'Code Quality and Linting'}{
+            parallel{
+                stage('esLint'){
+                    steps{
+                        echo 'Running esLint'
+                        sh 'npm run lint'
+                        sh 'ls -R'
+                        publishHtml({
+                            allowMissing: false,
+                            alwaysLinkToLastBuild: true,
+                            keepAll: true,
+                            reportDir: 'lint-results',
+                            reportFiles: 'eslint-report.html',
+                            reportName: 'eslint report'
+                            })
+                    }
+                }
+                stage('Prettier Check'){
+                    steps{
+                        echo 'Check Code Formatting'
+                        sh 'npm run prettier:check'
+                    }
+                }
+                stage('Security Check'){
+                    steps{
+                        echo 'Check Security'
+                        sh 'npm audit --audit-level-high'
+                    }
+                }
+                stage('Unit Test'){
+                    steps{
+                        echo 'Unit Test Check'
+                        sh """
+                        export display = 99
+                        npm run test:ci
+ 
+                        """
+                    }
+                }
+                stage('Build'){
+                    steps{
+                        echo 'Building Angular Application'
+                        script {
+                            def buildCommand
+ 
+                            if (env.branch_name == 'main' || env.branch_name == 'master'){
+                                buildCommand = 'npm run build: prod '
+                            }
+                            else if(env.branch_name == 'dev'){
+                                buildCommand = 'npm run build: staging '
+                            }
+                            else{
+                                buildCommand = 'npm run build '
+                            }
+                            sh buildCommand
+                        }
+                    }
+                } 
+                stage('end to end test')   {
+                    when{
+                        anyOf{
+                            branch 'main'
+                            branch 'master'
+                            branch 'dev'
+                        }
+                    }
+                    steps{
+                        echo 'running end to end test'
+                        sh '''
+                        npm run start:ci &
+                        server_pid = $!
+                        sleep 30
+                        npm run e2e:ci
+                        kill $server_pid
+                        '''
+                    }
+                }
+            }
+         }
+    }
+}
